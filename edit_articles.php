@@ -7,10 +7,11 @@ if (!isset($_GET['file']))
     die('Не указана статья для редактирования.');
 }
 
-$articleFile = "$articlesDir/" . basename($_GET['file']);
+$rawFilePath = urldecode($_GET['file']); // Декодируем путь
+$articleFile = "$articlesDir/" . $rawFilePath;
 if (!file_exists($articleFile)) 
 {
-    die('Статья не найдена.');
+    die('Статья не найдена. Проверяемый путь: ' . htmlspecialchars($articleFile));
 }
 
 $fileContent = file_get_contents($articleFile);
@@ -18,6 +19,7 @@ $title = '';
 $shortDescription = '';
 $fullDescription = '';
 $attachedFiles = [];
+$currentGroup = basename(dirname($articleFile));
 
 if (preg_match('/<title>(.*?)<\/title>/', $fileContent, $matches)) 
 {
@@ -37,135 +39,122 @@ if (preg_match_all('/<a href="([^"]+)" download>/', $fileContent, $matches))
 {
     $attachedFiles = $matches[1];    
 }
+
 function translit($text) 
 {
     $transliterator = Transliterator::create('Any-Latin; Latin-ASCII; Lower');
-    return preg_replace('/[^a-zA-Zа-яА-Я0-9_\-]/u', '_', $text);//$transliterator->transliterate($text));
+    return preg_replace('/[^a-z0-9_-]/', '-', $transliterator->transliterate($text));
 }
 
+$errorMessage = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') 
 {
     $newTitle = trim($_POST['title']);
     $newShortDescription = trim($_POST['short_description']);
     $newDescription = trim($_POST['full_description']);
     
-    $oldArticleSlug = translit($title);
-    $newArticleSlug = translit($newTitle);
+    $newGroup = trim($_POST['group']) === 'new_group' ? trim($_POST['new_group']) : trim($_POST['group']);
+    if (strtolower($newGroup) === 'uploads') {
+        $errorMessage = 'Имя "uploads" зарезервировано и не может быть использовано для группы.';
+    } else {
+        $fileName = basename($articleFile);
+        $newFilePath = $articleFile;
 
-    $oldUploadDir = "$uploadsDir/$oldArticleSlug";
-    $newUploadDir = "$uploadsDir/$newArticleSlug";
-
-    $oldUploadFile = "articles/$oldArticleSlug.php"; 
-    $newUploadFile = "articles/$newArticleSlug.php"; 
-
-    error_log("newUploadFile - $newUploadFile \n oldUploadFile - $oldUploadFile\n \n \n");
-    if($oldArticleSlug !== $newArticleSlug)
-    {
-        if(is_dir($oldUploadDir))
-        {
-            rename($oldUploadDir, $newUploadDir);
+        if ($newGroup && $newGroup !== $currentGroup) {
+            $newDir = $articlesDir . '/' . $newGroup;
+            if (!is_dir($newDir)) {
+                mkdir($newDir, 0777, true);
+            }
+            $newFilePath = $newDir . '/' . $fileName;
+            if (file_exists($articleFile) && $articleFile !== $newFilePath) {
+                rename($articleFile, $newFilePath);
+            }
         }
-        if(is_file($oldUploadFile))
-        {   
-           
-            copy($oldUploadFile, $newUploadFile);  
-            $articleFile = $newUploadFile;          
-        }
-    }
-    elseif(!is_dir($newUploadDir))
-    {
-        mkdir($newUploadDir, 0777,true);
-    }
-  
-    $uploadedFiles = [];
-    if (!empty($_FILES['files']['name'][0])) 
-    {
-        foreach ($_FILES['files']['name'] as $key => $fileName) 
+
+        $articleSlug = translit($newTitle);
+        $newUploadDir = "$uploadsDir/$articleSlug";
+        if (!is_dir($newUploadDir)) 
         {
-            if ($_FILES['files']['error'][$key] === UPLOAD_ERR_OK) 
+            mkdir($newUploadDir, 0777, true);
+        }
+        
+        $uploadedFiles = [];
+        if (!empty($_FILES['files']['name'][0])) 
+        {
+            foreach ($_FILES['files']['name'] as $key => $fileName) 
             {
-                $fileTmpPath = $_FILES['files']['tmp_name'][$key];
-                $safeFileName = basename($fileName);
-                $destination = "$newUploadDir/" . rawurlencode($safeFileName); 
-                if (move_uploaded_file($fileTmpPath, $destination)) 
+                if ($_FILES['files']['error'][$key] === UPLOAD_ERR_OK) 
                 {
-                    $uploadedFiles[] = $destination;
+                    $fileTmpPath = $_FILES['files']['tmp_name'][$key];
+                    $safeFileName = basename($fileName);
+                    $destination = "$newUploadDir/" . rawurlencode($safeFileName);
+                    if (move_uploaded_file($fileTmpPath, $destination)) 
+                    {
+                        $uploadedFiles[] = $destination;
+                    }
                 }
             }
         }
-    }
-    $articleSlug = basename($_GET['file'], );
-    if(!empty($_POST['title']))
-    {
-        $articleSlug = translit(trim($_POST['title']));
-    }
-    if (!empty($_POST['delete_files'])) 
-    {
-        foreach ($_POST['delete_files'] as $fileToDelete) 
+        
+        if (!empty($_POST['delete_files'])) 
         {
-            $decodeFile = rawurlencode($fileToDelete);
-            $fullPath = "$newUploadDir/$decodeFile";
-            if (file_exists($fullPath)) 
+            foreach ($_POST['delete_files'] as $fileToDelete) 
             {
-                unlink($fullPath);                
-            }
-            $encodedPath = "$uploadsDir/$articleSlug" . rawurlencode($decodeFile);
-            if (($key = array_search($encodedPath, $attachedFiles)) !== false) 
-            {
-                unset($attachedFiles[$key]);
-            }
-        }
-    }
-    $attachedFiles = [];
-    if(is_dir("$uploadsDir/$articleSlug"))
-    {
-        $files = scandir("$uploadsDir/$articleSlug");
-        foreach($files as $file)
-        {      
-            if($file !== "." && $file !== "..")
-            {
-                $attachedFiles[] = "$uploadsDir/$articleSlug/" . rawurlencode(basename($file));
+                $fullPath = "$newUploadDir/" . rawurlencode(basename($fileToDelete));
+                if (file_exists($fullPath)) 
+                {
+                    unlink($fullPath);
+                    if (($key = array_search($fullPath, $attachedFiles)) !== false) 
+                    {
+                        unset($attachedFiles[$key]);
+                    }
+                }
             }
         }
-    }
-    $allFiles = $attachedFiles;
-
-    $articleContent = "<?php \n// Название: " . addslashes($newTitle) . "\n";
-    $articleContent .= "// Краткое описание: " . addslashes($newShortDescription) . "\n";
-    $articleContent .= "?>";
-    $articleContent .= "<!DOCTYPE html>\n";
-    $articleContent .= "<html lang=\"ru\">\n";
-    $articleContent .= "<head>\n";
-    $articleContent .= "    <meta charset=\"UTF-8\">\n";
-    $articleContent .= "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
-    $articleContent .= "    <meta name=\"description\" content=\"" . htmlspecialchars($newShortDescription) . "\">\n";
-    $articleContent .= "    <title>" . htmlspecialchars($newTitle) . "</title>\n";
-    $articleContent .= "    <link rel=\"stylesheet\" href=\"../css/styles.css\">\n";
-    $articleContent .= "</head>\n";
-    $articleContent .= "<body>\n";
-    $articleContent .= "    <?php include '../includes/header.php'; ?> \n";
-    $articleContent .= "    <h1>" . htmlspecialchars($newTitle) . "</h1>\n";
-    $articleContent .= "    <p style=\"display: none;\">" . nl2br(htmlspecialchars($newShortDescription)) . "</p>\n";
-    $articleContent .= "    <p class=\"full-description\">" . nl2br(htmlspecialchars($newDescription)) . "</p>\n";
-    
-    if (!empty($allFiles)) 
-    {
-        $articleContent .= "    <h2>Приложенные файлы:</h2>\n<ul>\n";
-        foreach ($allFiles as $file) 
+        
+        $allFiles = array_merge($attachedFiles, $uploadedFiles);
+        
+        $articleContent = "<?php \n// Название: " . addslashes($newTitle) . "\n";
+        $articleContent .= "// Краткое описание: " . addslashes($newShortDescription) . "\n";
+        $articleContent .= "?>";
+        $articleContent .= "<!DOCTYPE html>\n";
+        $articleContent .= "<html lang=\"ru\">\n";
+        $articleContent .= "<head>\n";
+        $articleContent .= "    <meta charset=\"UTF-8\">\n";
+        $articleContent .= "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
+        $articleContent .= "    <meta name=\"description\" content=\"" . htmlspecialchars($newShortDescription) . "\">\n";
+        $articleContent .= "    <title>" . htmlspecialchars($newTitle) . "</title>\n";
+        $articleContent .= "    <link rel=\"stylesheet\" href=\"../css/styles.css\">\n";
+        $articleContent .= "</head>\n";
+        $articleContent .= "<body>\n";
+        $articleContent .= "    <?php include '../includes/header.php'; ?> \n";
+        $articleContent .= "    <h1>" . htmlspecialchars($newTitle) . "</h1>\n";
+        $articleContent .= "    <p style=\"display: none;\">" . nl2br(htmlspecialchars($newShortDescription)) . "</p>\n";
+        $articleContent .= "    <p class=\"full-description\">" . nl2br(htmlspecialchars($newDescription)) . "</p>\n";
+        
+        if (!empty($allFiles)) 
         {
-            $fileName = basename(rawurldecode($file));
-            $articleContent .= "        <li><a href=\"" . $file . "\" download>"  .htmlspecialchars(basename(rawurldecode($file))) ."</a></li>\n";
+            $articleContent .= "    <h2>Приложенные файлы:</h2>\n<ul>\n";
+            foreach ($allFiles as $file) 
+            {
+                $fileName = basename(rawurldecode($file));
+                $articleContent .= "        <li><a href=\"" . htmlspecialchars($file) . "\" download>" . htmlspecialchars($fileName) . "</a></li>\n";
+            }
+            $articleContent .= "    </ul>\n";
         }
-        $articleContent .= "    </ul>\n";
+        
+        $articleContent .= "</body>\n</html>";    
+        
+        file_put_contents($newFilePath, $articleContent);
+        header("Location: edit_articles.php?file=" . urlencode($newGroup . '/' . basename($newFilePath)));
+        exit;
     }
-    
-    $articleContent .= "</body>\n</html>";    
-    
-    file_put_contents($articleFile, $articleContent);
-    header("Location: edit_articles.php?file=" . urlencode(basename($articleFile))); 
-    unlink($oldUploadFile);
-    exit;
 }
+
+$groups = array_filter(glob($articlesDir . '/*', GLOB_ONLYDIR), function($dir) {
+    return is_dir($dir) && basename($dir) !== 'uploads';
+});
+$groups = array_map('basename', $groups);
 ?>
 
 <!DOCTYPE html>
@@ -179,7 +168,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST')
 <body>
     <?php include 'includes/header.php'; ?>
     <h1>Редактировать статью</h1>
+    <?php if ($errorMessage): ?>
+        <p style="color: red;"><?php echo htmlspecialchars($errorMessage); ?></p>
+    <?php endif; ?>
     <form action="" method="post" enctype="multipart/form-data">
+        <label>
+            Группа:
+            <select name="group" id="group" required>
+                <?php foreach ($groups as $group): ?>
+                    <option value="<?php echo htmlspecialchars($group); ?>" 
+                            <?php echo $group === $currentGroup ? 'selected' : ''; ?>>
+                        <?php echo htmlspecialchars($group); ?>
+                    </option>
+                <?php endforeach; ?>
+                <option value="new_group">Новая группа...</option>
+            </select>
+            <input type="text" name="new_group" id="new_group" placeholder="Имя новой группы" 
+                   style="display: <?php echo $currentGroup ? 'none' : 'block'; ?>;">
+        </label>
+        <br><br>
         <label>
             Название:
             <input type="text" name="title" value="<?php echo htmlspecialchars($title); ?>" required>
@@ -200,13 +207,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST')
             <ul>
                 <?php foreach ($attachedFiles as $file): ?>
                     <li>
-                        <?php $fileName =rawurldecode( basename($file)); $file;?> 
+                        <?php $fileName = rawurldecode(basename($file)); ?>
                         <label>
                             <input type="checkbox" name="delete_files[]" value="<?php echo htmlspecialchars(rawurldecode($fileName)); ?>"> 
                             Удалить
-                        </label>                        
-                        <a href=<?php echo htmlspecialchars(rawurldecode($file)); ?>" download>  
-                            <?php echo htmlspecialchars((rawurldecode($fileName))); ?>                    
+                        </label>
+                        <a href="<?php echo htmlspecialchars($file); ?>" download>
+                            <?php echo htmlspecialchars(rawurldecode($fileName)); ?>
                         </a>
                     </li>
                 <?php endforeach; ?>
@@ -222,5 +229,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST')
         <br><br>
         <button type="submit">Сохранить изменения</button>
     </form>
+    <script>
+        document.getElementById('group').addEventListener('change', function() {
+            var newGroupInput = document.getElementById('new_group');
+            newGroupInput.style.display = this.value === 'new_group' ? 'block' : 'none';
+        });
+    </script>
 </body>
 </html>

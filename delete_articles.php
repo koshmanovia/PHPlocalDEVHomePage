@@ -3,49 +3,56 @@
 $articlesDir = 'articles';
 function deleteFolder($folder)
 {
-    if (!is_dir($folder)) 
+    if(!is_dir($folder)) 
     {
         return;
     }
-    $files = glob($folder . '/*', GLOB_BRACE);
-    foreach ($files as $file) 
+
+    $files = array_diff(scandir($folder),['.','..']);
+    foreach($files as $file)
     {
-        if (is_dir($file)) 
+        $filePath = $folder . DIRECTORY_SEPARATOR . $file;
+        
+        if(strtoupper(substr(PHP_OS,0,3) === 'WIN'))
         {
-            deleteFolder($file);
-        } 
-        else 
-        {
-            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') 
-            {
-                $file = mb_convert_encoding($file, 'Windows-1251', 'UTF-8');
-            }
-            unlink($file);
+            $filePath = mb_convert_encoding($filePath, 'Windows-1251', 'UTF-8');
         }
+
+        if(is_dir($filePath))
+        {
+           deleteFolder($filePath);
+        }
+        else
+        {
+            unlink($filePath);
+        }
+
+
+        if(strtoupper(substr(PHP_OS,0,3) === 'WIN'))
+        {
+            $folder = mb_convert_encoding($folder, 'Windows-1251', 'UTF-8');
+        }
+        rmdir($folder);
     }
-    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') 
-    {
-        $folder = mb_convert_encoding($folder, 'Windows-1251', 'UTF-8');
-    }
-    rmdir($folder);
+
 }
 // Если передан параметр удаления
-if (isset($_GET['file'])) 
-{
+if (isset($_GET['file'])) {
     $articleFile = $articlesDir . '/' . basename($_GET['file']);
-    $articleFolder = $articlesDir . '/uploads/' . str_replace(' ', '_',pathinfo($articleFile, PATHINFO_FILENAME));
-    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-        $articleFile = mb_convert_encoding($articleFile, 'Windows-1251', 'UTF-8');
-        $articleFolder = mb_convert_encoding(str_replace(' ', '_',$articleFolder), 'Windows-1251', 'UTF-8');
-    }
+    $articleFolder = $articlesDir . '/uploads/' . pathinfo($articleFile, PATHINFO_FILENAME);
+    
+    if(strtoupper(substr(PHP_OS,0,3)==='WIN'))
+        {
+            $filePath = mb_convert_encoding($articleFolder, 'Windows-1251', 'UTF-8');
+        }
+    
     // Удаляем папку с файлами, если она существует
-    if (is_dir($articleFolder)) 
-    {
-        deleteFolder($articleFolder);
+    if (is_dir($articleFolder)) {
+        array_map('unlink', glob("$articleFolder/*.*")); // Удаляем все файлы в папке
+        rmdir($articleFolder); // Удаляем саму папку
     }
     // Удаляем саму статью
-    if (file_exists($articleFile)) 
-    {
+    if (file_exists($articleFile)) {
         unlink($articleFile);
     }
     header('Location: index.php');
@@ -53,14 +60,13 @@ if (isset($_GET['file']))
 }
 // Считываем список всех статей
 $articles = [];
-if (is_dir($articlesDir)) 
-{
-    foreach (glob($articlesDir . '/*.php') as $file) 
-    {
+if (is_dir($articlesDir)) {
+    foreach (glob($articlesDir . '/*.php') as $file) {
         $articles[] = basename($file);
     }
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -70,7 +76,9 @@ if (is_dir($articlesDir))
     <link rel="stylesheet" href="includes/styles.css">
 </head>
 <body>
-    <?php include 'includes/header.php'; ?>    <h1>Удалить статью</h1>
+    <?php include 'includes/header.php'; ?>  
+    <h1>Удалить статью</h1>
+
     <?php if (!empty($articles)): ?>
         <ul>
             <?php foreach ($articles as $article): ?>
@@ -88,3 +96,5 @@ if (is_dir($articlesDir))
     <?php endif; ?>
 </body>
 </html>
+
+
